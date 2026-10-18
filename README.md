@@ -1,50 +1,101 @@
-# Formula 1 Podium Prediction Companion
+# Formula 1 Podium Prediction — Milestone 1 (Team 106)
+
+Advanced Computer Lab, GUC · Milestone 1
+
+**Team:** John Magdy Fouad Soliman · Abdelrahman Mohamed Abdelrahman Omar Elaswar · Omar Ehab Mohamed Salama Nasr · Mohamed Hany Elghamry Youssef
+
+**Kaggle notebook:** https://www.kaggle.com/code/johnsolimann/project-acl-2026
 
 ## Overview
-This repository contains a complete data-engineering and machine-learning pipeline designed to predict whether a Formula 1 driver will finish on the podium (1st, 2nd, or 3rd place)[cite: 1, 8]. The model strictly utilizes pre-race information, establishing a firm prediction cutoff after qualifying sessions are complete but before the race start[cite: 1, 8]. 
 
-The project emphasizes rigorous leakage control, handling of historical data drift (1950–2024), and model explainability to unpack the factors that give drivers a realistic shot at the podium[cite: 8, 12].
+For every driver in every Formula 1 race, the project predicts whether the driver finishes on the podium (`positionOrder ≤ 3`). It uses only information available **after qualifying and before the race starts**. The whole pipeline lives in one run-all Jupyter notebook:
+
+- data audit and cleaning
+- the three data-engineering questions
+- leakage-safe feature engineering
+- modeling and ablation
+- explainability (XAI)
+- an inference function
+
+## Repository contents
+
+| File | Description |
+|---|---|
+| `project-acl-2026_MS1_finalSubmission.ipynb` | The run-all notebook with all outputs (293 cells, 55 figures) |
+| `ACL_Milestone1_Report_Team106.pdf` | Analytical report: answers to the data-engineering questions with figures, the selected features and why each is valid at the pre-race cutoff, and known limitations |
+| `README.md` | This file |
 
 ## Dataset
-This project uses the **Formula 1 World Championship (1950-2024) - Kaggle / Ergast dataset**[cite: 8, 16]. It is a highly relational dataset comprising 14 CSV tables, including `circuits`, `constructors`, `drivers`, `results`, `qualifying`, and `standings`[cite: 8].
 
-## Core Objectives & Pipeline
+[Formula 1 World Championship (1950–2024)](https://www.kaggle.com/datasets/rohanrao/formula-1-world-championship-1950-2020), Kaggle / Ergast. It has 14 relational CSV tables (`results`, `races`, `qualifying`, `drivers`, `constructors`, `circuits`, `status`, standings, …). The dataset is **not** included in this repository.
 
-### 1. Data Cleaning & Integrity Auditing
-* **Sentinel Handling:** Cleans and formats placeholder "missing" values (e.g., `\N` strings) and applies semantic typing to dates and lap-time durations[cite: 9].
-* **Grain Enforcement:** Ensures the modeling table maintains a strict unit of analysis of one row per `(raceId, driverId)`[cite: 8, 9]. Resolves historical anomalies, such as the 1950s "shared drives" where teammates swapped cars mid-race, using deterministic disambiguation rules[cite: 7, 9].
-* **Historical Drift Handling:** Accounts for missing qualifying data in early F1 eras and varying field sizes[cite: 5, 7].
+## Pipeline
 
-### 2. Relational Data Engineering
-Answers complex, multi-hop relational domain questions backed by exploratory data analysis (EDA):
-* **Front-Row Conversion:** Analyzes which circuits most frequently convert a front-row start into a podium, comparing the pre-2014 eras against the hybrid era[cite: 9].
-* **Home Race Advantage:** Evaluates whether drivers podium more often at their home circuits after controlling for grid starting position[cite: 10].
-* **Mechanical Reliability:** Compares constructor mechanical-retirement rates between the 2014–2021 turbo-hybrid era and the 2022–2024 ground-effect era[cite: 6, 10].
+1. **EDA and cleaning.**
+   - `\N` sentinels are parsed as missing, and dates and lap times are converted to real types.
+   - Primary and foreign keys are verified; the raw CSVs are never modified.
+   - The Indianapolis 500 and non-starters are excluded.
+   - 1950s shared-drive duplicates are resolved (keep the car the driver started in, then the best `positionOrder`).
+   - Result: a modeling table of **24,551 rows, unique on `(raceId, driverId)`**, with a 13.6% podium rate.
+   - The key EDA plots are repeated before and after cleaning.
+2. **Data-engineering questions** (multi-hop joins, each answered with plots plus notes on grain, missing data and the pre-race cutoff):
+   - **Q1:** front-row conversion by circuit, 2003–2013 vs 2014–2024, comparing the grid and qualifying definitions of "front row".
+   - **Q2:** home advantage after controlling for grid position (Cochran–Mantel–Haenszel and logistic regression). **No home effect.**
+   - **Q3:** constructor mechanical-retirement rates, 2014–2021 vs 2022–2024, using an explicit mapping of all 139 status values.
+3. **Leakage-safe features.** 24 features in 6 groups:
+   - Grid
+   - Qualifying
+   - Driver form (`shift(1)` before a 20-race rolling window)
+   - Constructor form (aggregated per constructor and race before shifting, so a teammate's result cannot leak)
+   - Championship standings after the previous round
+   - Context
 
-### 3. Leakage-Safe Feature Engineering
-* Constructs features strictly from data available before the lights go out[cite: 8].
-* **Forbidden Features:** Prevents data leakage by completely excluding current-race results, race status, pit stops, lap times, and post-race championship standings[cite: 8].
-* **Allowed Features:** Utilizes the starting grid (accounting for penalties), qualifying metrics, shifted championship standings entering the race, and historical rolling constructor/driver form[cite: 2, 8].
+   Six assertion-based leakage checks verify them. The rolling window (N = 20) and the training window (full history) were chosen by validation experiments.
+4. **Split.** Chronological by season: train 1950–2019, validation 2020–2021, test 2022–2024.
+5. **Pre-processing.** Median imputation then standard scaling, fitted on the training rows only. Three pre-processing-order experiments are included.
+6. **Models.**
+   - Logistic Regression (baseline), Random Forest, HistGradientBoosting, and a shallow neural network (scikit-learn `MLPClassifier`, 128→64, early stopping).
+   - 52 configurations in total, all tuned on validation.
+   - Primary metric is **PR-AUC**, secondary **ROC-AUC**. F1, precision and recall are also reported, at thresholds chosen on validation.
+7. **Ablation and XAI.**
+   - Feature-group ablation.
+   - Permutation importance and SHAP (model-agnostic permutation explainer) for global explanations.
+   - A SHAP waterfall plot and LIME for single predictions.
+   - Feature importance is reported as what the model relies on, **not** as a causal effect.
+8. **Inference.**
+   - `predict_podium(record)` builds the features from a raw pre-race record and applies the frozen pipeline and threshold. It handles complete and partially missing records.
+   - It rejects post-race fields.
+   - The trained model is saved to `model/podium_model.joblib`.
 
-### 4. Predictive Modeling
-Frames the problem as a binary classification task evaluating models on an unseen test set following a chronological split (e.g., Training <= 2019, Validation 2020–2021, Test >= 2022)[cite: 4, 10]:
-* **Baselines & Advanced Models:** Compares at least two statistical machine learning models (e.g., Logistic Regression, Gradient Boosting) against a shallow Feed-Forward Neural Network (FFNN)[cite: 10].
-* **Metrics:** Evaluates performance using ROC-AUC, PR-AUC (critical due to the ~15% podium class imbalance), and F1 Score[cite: 10, 11].
+## Results
 
-### 5. Explainable AI (XAI) & Ablation
-* **Ablation Studies:** Measures the performance impact of removing specific feature groups (e.g., qualifying data, standings)[cite: 11].
-* **Global & Local Explanations:** Utilizes Permutation Importance, SHAP (Tree/Kernel), and LIME to interpret model behavior overall and on individual predictions[cite: 11]. 
-* *Disclaimer:* Feature importance and SHAP values indicate model reliance and association; they do not represent causal effects[cite: 12].
+| Model | Validation PR-AUC | Test PR-AUC | Test ROC-AUC | Test F1 |
+|---|---|---|---|---|
+| Grid-only rule (no ML) | 0.648 | 0.647 | 0.913 | 0.649 |
+| Logistic Regression | 0.742 | 0.716 | 0.934 | 0.654 |
+| Random Forest | 0.743 | 0.718 | 0.940 | 0.680 |
+| **Gradient Boosting (final)** | **0.749** | **0.709** | **0.938** | **0.673** |
+| Shallow NN | 0.746 | 0.705 | 0.932 | 0.650 |
 
-## Repository Structure
-* `/data/`: Directory for the 14 raw Ergast CSV files (not tracked in version control).
-* `/notebooks/`: Contains the run-all Jupyter Notebook demonstrating the complete end-to-end pipeline (EDA, cleaning, DE questions, modeling, XAI, and inference)[cite: 12].
-* `/reports/`: PDF analytical reports detailing DE query answers, feature validity, limitations, and model comparisons[cite: 12, 15].
-* `/src/`: Helper scripts for data preprocessing and the final inference function capable of handling complete or partially-missing race records[cite: 12].
+The final model was chosen on validation only. All models beat the grid-only rule. Their differences are within the bootstrap uncertainty (test 95% CI for Gradient Boosting: 0.66–0.77).
 
-## Setup & Installation
-1. Clone the repository.
-2. Download the Formula 1 World Championship dataset from Kaggle and extract the CSV files into the `/data/` directory.
-3. Install the required dependencies:
+## How to run
+
+**On Kaggle (recommended).**
+
+1. Open the Kaggle notebook.
+2. Make sure the dataset is attached (*Add Input → Formula 1 World Championship (1950 – 2024)*).
+3. Turn *Settings → Internet* on, then choose *Run All*.
+
+The first cell pins `scikit-learn==1.9.1` and installs `shap` and `lime` if they are missing.
+
+**Locally.**
+
+1. Download the dataset from Kaggle and extract the CSVs into any folder under the notebook's directory (e.g. `data/`). The notebook finds `results.csv` automatically.
+2. Install the dependencies:
    ```bash
-   pip install -r requirements.txt
+   pip install numpy pandas matplotlib seaborn scipy statsmodels scikit-learn==1.9.1 shap lime joblib
+   ```
+3. Run all cells.
+
+The notebook writes the cleaned tables to `clean/`, all figures to `figures/`, the result tables to `tables/` and the trained model to `model/`. A full run takes about 7–9 minutes on a CPU.
