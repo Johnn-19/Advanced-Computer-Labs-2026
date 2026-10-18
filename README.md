@@ -69,15 +69,35 @@ For every driver in every Formula 1 race, the project predicts whether the drive
 
 ## Results
 
-| Model | Validation PR-AUC | Test PR-AUC | Test ROC-AUC | Test F1 |
-|---|---|---|---|---|
-| Grid-only rule (no ML) | 0.648 | 0.647 | 0.913 | 0.649 |
-| Logistic Regression | 0.742 | 0.716 | 0.934 | 0.654 |
-| Random Forest | 0.743 | 0.718 | 0.940 | 0.680 |
-| **Gradient Boosting (final)** | **0.749** | **0.709** | **0.938** | **0.673** |
-| Shallow NN | 0.746 | 0.705 | 0.932 | 0.650 |
+### Final model: Gradient Boosting
 
-The final model was chosen on validation only. All models beat the grid-only rule. Their differences are within the bootstrap uncertainty (test 95% CI for Gradient Boosting: 0.66–0.77).
+The final model is a **Gradient Boosting** classifier (`HistGradientBoostingClassifier`, learning rate 0.03, 15 leaves per tree, at least 20 rows per leaf, 300 trees). It uses a podium threshold of **0.233**: a driver is predicted to finish on the podium when the predicted probability is at least 0.233. This threshold was chosen to maximise F1 on the validation set.
+
+**Why this model.** The selection rule was fixed in advance: the model with the highest validation PR-AUC wins, and models within 0.005 of it count as a tie, in which case the simpler one wins. Gradient Boosting scored highest (0.749). The neural network (0.746) tied with it but is more complex. The test set was used only once, after this choice was made.
+
+**Performance of the final model**
+
+| Split | ROC-AUC | PR-AUC | F1 | Precision | Recall |
+|---|---|---|---|---|---|
+| Train (1950–2019) | 0.933 | 0.673 | 0.626 | 0.505 | 0.823 |
+| Validation (2020–2021) | 0.931 | 0.749 | 0.703 | 0.641 | 0.778 |
+| **Test (2022–2024, unseen)** | **0.938** | **0.709** | **0.673** | **0.567** | **0.828** |
+
+On the unseen test seasons the model finds 83% of the actual podium finishers (recall 0.828). When it predicts a podium it is right 57% of the time (precision 0.567). Most of its wrong podium predictions are fast cars that finished 4th–6th. The 95% bootstrap interval for test PR-AUC is 0.66–0.77.
+
+### Comparison with the other models (test set, 2022–2024)
+
+The other models are the required comparison: Logistic Regression is the baseline, Random Forest is a second statistical model, and the shallow neural network is the required neural model. The grid-only rule is a reference with no machine learning (predict a podium when starting P1–P3). Every model uses the same rows, the same 24 features and the same pre-processing.
+
+| Model | ROC-AUC | PR-AUC | F1 | Precision | Recall |
+|---|---|---|---|---|---|
+| Grid-only rule (no ML) | 0.913 | 0.647 | 0.649 | 0.650 | 0.647 |
+| Logistic Regression (baseline) | 0.934 | 0.716 | 0.654 | 0.625 | 0.686 |
+| Random Forest | 0.940 | 0.718 | 0.680 | 0.622 | 0.750 |
+| **Gradient Boosting (final)** | **0.938** | **0.709** | **0.673** | **0.567** | **0.828** |
+| Shallow NN (128→64) | 0.932 | 0.705 | 0.650 | 0.599 | 0.711 |
+
+All models clearly beat the grid-only rule, so the form and standings features add real value. The differences between the four models are smaller than the bootstrap uncertainty. Random Forest and Logistic Regression are slightly higher than Gradient Boosting on test PR-AUC, but the final model was not changed after seeing the test results, because that would turn the test set into a second validation set. Train and validation results for every model are in Section 8.4 of the notebook.
 
 ## How to run
 
